@@ -20,7 +20,7 @@ func main() {
 
 	// Start Admin Server
 	adminServer := NewAdminServer(logger)
-	go adminServer.Start("8080")
+	go adminServer.Start("8333")
 
 	addr := &net.UDPAddr{
 		Port: 53,
