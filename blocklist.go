@@ -4,33 +4,37 @@ import (
 	"bufio"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
+	"time"
 )
 
 const blocklistURL = "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"
+const customBlocklistFile = "custom_blocklist.txt"
 
 type Blocklist struct {
-	mu      sync.RWMutex
-	domains map[string]struct{}
+	mu            sync.RWMutex
+	domains       map[string]struct{}
+	customDomains map[string]struct{}
 }
 
 func NewBlocklist() *Blocklist {
 	return &Blocklist{
-		domains: make(map[string]struct{}),
+		domains:       make(map[string]struct{}),
+		customDomains: make(map[string]struct{}),
 	}
 }
 
 func (b *Blocklist) Load() error {
-	fmt.Println("Downloading blocklist...")
+	fmt.Println("Downloading community blocklist...")
 	resp, err := http.Get(blocklistURL)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 
-	b.mu.Lock()
-	defer b.mu.Unlock()
+	newDomains := make(map[string]struct{})
 
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
@@ -43,22 +47,81 @@ func (b *Blocklist) Load() error {
 		if len(parts) >= 2 && (parts[0] == "0.0.0.0" || parts[0] == "127.0.0.1") {
 			domain := parts[1]
 			if domain != "0.0.0.0" && domain != "127.0.0.1" && domain != "localhost" && domain != "broadcasthost" {
-				b.domains[domain] = struct{}{}
+				newDomains[domain] = struct{}{}
 			}
 		}
 	}
 
-	fmt.Printf("Loaded %d blocked domains\n", len(b.domains))
+	b.mu.Lock()
+	b.domains = newDomains
+	b.mu.Unlock()
+
+	fmt.Printf("Loaded %d community blocked domains\n", len(b.domains))
 	return scanner.Err()
 }
 
+func (b *Blocklist) loadCustomList() {
+	file, err := os.Open(customBlocklistFile)
+	if err != nil {
+		// It's okay if the file doesn't exist yet
+		if os.IsNotExist(err) {
+			b.mu.Lock()
+			b.customDomains = make(map[string]struct{})
+			b.mu.Unlock()
+		}
+		return
+	}
+	defer file.Close()
+
+	newCustomDomains := make(map[string]struct{})
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		// Expect just the domain name per line
+		newCustomDomains[line] = struct{}{}
+	}
+
+	b.mu.Lock()
+	// Only print if the count changed to avoid spamming the console
+	if len(b.customDomains) != len(newCustomDomains) {
+		fmt.Printf("Loaded %d custom domains from %s\n", len(newCustomDomains), customBlocklistFile)
+	}
+	b.customDomains = newCustomDomains
+	b.mu.Unlock()
+}
+
+// WatchCustomBlocklist polls the custom blocklist file every 5 seconds and updates the map instantly
+func (b *Blocklist) WatchCustomBlocklist() {
+	// Create an empty file if it doesn't exist
+	if _, err := os.Stat(customBlocklistFile); os.IsNotExist(err) {
+		os.WriteFile(customBlocklistFile, []byte("# Add your custom domains here, one per line\n"), 0644)
+	}
+
+	// Load initially
+	b.loadCustomList()
+
+	// Poll every 5 seconds
+	ticker := time.NewTicker(5 * time.Second)
+	for range ticker.C {
+		b.loadCustomList()
+	}
+}
+
 func (b *Blocklist) IsBlocked(domain string) bool {
-	// DNS queries usually have a trailing dot, we need to remove it for matching
 	domain = strings.TrimSuffix(domain, ".")
 	
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
+	// Check custom first
+	if _, exists := b.customDomains[domain]; exists {
+		return true
+	}
+
+	// Then check community
 	_, exists := b.domains[domain]
 	return exists
 }

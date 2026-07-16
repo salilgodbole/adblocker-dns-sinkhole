@@ -13,6 +13,9 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Start watching the custom blocklist in the background
+	go blocklist.WatchCustomBlocklist()
+
 	addr := &net.UDPAddr{
 		Port: 53,
 		IP:   net.ParseIP("0.0.0.0"),
