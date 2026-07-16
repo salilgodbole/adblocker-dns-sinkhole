@@ -10,7 +10,7 @@ import (
 
 const upstreamDNS = "1.1.1.1:53"
 
-func handleDNSRequest(conn *net.UDPConn, addr *net.UDPAddr, buf []byte, blocklist *Blocklist) {
+func handleDNSRequest(conn *net.UDPConn, addr *net.UDPAddr, buf []byte, blocklist *Blocklist, logger *QueryLogger) {
 	var msg dnsmessage.Message
 	if err := msg.Unpack(buf); err != nil {
 		return
@@ -23,8 +23,11 @@ func handleDNSRequest(conn *net.UDPConn, addr *net.UDPAddr, buf []byte, blocklis
 	question := msg.Questions[0]
 	domainName := question.Name.String()
 
-	if blocklist.IsBlocked(domainName) {
-		fmt.Printf("Blocked: %s\n", domainName)
+	isBlocked, status := blocklist.IsBlocked(domainName)
+	logger.Log(addr.IP.String(), domainName, status)
+
+	if isBlocked {
+		fmt.Printf("[%s] Blocked: %s\n", status, domainName)
 		sendBlockedResponse(conn, addr, msg)
 		return
 	}

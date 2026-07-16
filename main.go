@@ -7,6 +7,8 @@ import (
 )
 
 func main() {
+	logger := NewQueryLogger(1000)
+
 	blocklist := NewBlocklist()
 	if err := blocklist.Load(); err != nil {
 		fmt.Println("Error loading blocklist:", err)
@@ -15,6 +17,10 @@ func main() {
 
 	// Start watching the custom blocklist in the background
 	go blocklist.WatchCustomBlocklist()
+
+	// Start Admin Server
+	adminServer := NewAdminServer(logger)
+	go adminServer.Start("8080")
 
 	addr := &net.UDPAddr{
 		Port: 53,
@@ -41,6 +47,6 @@ func main() {
 		// Handle request in a goroutine
 		reqBuf := make([]byte, n)
 		copy(reqBuf, buf[:n])
-		go handleDNSRequest(conn, clientAddr, reqBuf, blocklist)
+		go handleDNSRequest(conn, clientAddr, reqBuf, blocklist, logger)
 	}
 }

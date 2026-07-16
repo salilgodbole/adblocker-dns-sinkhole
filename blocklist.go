@@ -110,7 +110,7 @@ func (b *Blocklist) WatchCustomBlocklist() {
 	}
 }
 
-func (b *Blocklist) IsBlocked(domain string) bool {
+func (b *Blocklist) IsBlocked(domain string) (bool, LogStatus) {
 	domain = strings.TrimSuffix(domain, ".")
 	
 	b.mu.RLock()
@@ -118,10 +118,13 @@ func (b *Blocklist) IsBlocked(domain string) bool {
 
 	// Check custom first
 	if _, exists := b.customDomains[domain]; exists {
-		return true
+		return true, StatusBlockedCustom
 	}
 
 	// Then check community
-	_, exists := b.domains[domain]
-	return exists
+	if _, exists := b.domains[domain]; exists {
+		return true, StatusBlockedDefault
+	}
+	
+	return false, StatusAllowed
 }
