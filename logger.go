@@ -18,27 +18,45 @@ type LogEntry struct {
 	ClientIP  string    `json:"client_ip"`
 	Domain    string    `json:"domain"`
 	Status    LogStatus `json:"status"`
+	QueryType string    `json:"query_type,omitempty"`
+	Response  string    `json:"response,omitempty"`
 }
 
 type QueryLogger struct {
-	mu      sync.RWMutex
-	entries []LogEntry
-	maxSize int
+	mu       sync.RWMutex
+	entries  []LogEntry
+	maxSize  int
+	tracking bool
 }
 
 func NewQueryLogger(maxSize int) *QueryLogger {
 	return &QueryLogger{
-		entries: make([]LogEntry, 0, maxSize),
-		maxSize: maxSize,
+		entries:  make([]LogEntry, 0, maxSize),
+		maxSize:  maxSize,
+		tracking: false,
 	}
 }
 
-func (l *QueryLogger) Log(clientIP, domain string, status LogStatus) {
+func (l *QueryLogger) IsTrackingEnabled() bool {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.tracking
+}
+
+func (l *QueryLogger) SetTracking(enabled bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.tracking = enabled
+}
+
+func (l *QueryLogger) Log(clientIP, domain string, status LogStatus, queryType string, response string) {
 	entry := LogEntry{
 		Timestamp: time.Now(),
 		ClientIP:  clientIP,
 		Domain:    domain,
 		Status:    status,
+		QueryType: queryType,
+		Response:  response,
 	}
 
 	l.mu.Lock()

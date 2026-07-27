@@ -19,6 +19,8 @@ func (s *AdminServer) Start(port string) {
 	http.HandleFunc("/", s.handleDashboard)
 	http.HandleFunc("/api/logs", s.handleGetLogs)
 	http.HandleFunc("/api/block", s.handleAddBlock)
+	http.HandleFunc("/api/tracking/toggle", s.handleToggleTracking)
+	http.HandleFunc("/api/tracking/state", s.handleTrackingState)
 
 	fmt.Printf("Admin dashboard running at http://localhost:%s\n", port)
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
@@ -64,6 +66,22 @@ func (s *AdminServer) handleAddBlock(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Domain added"))
+}
+
+func (s *AdminServer) handleToggleTracking(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	newState := !s.logger.IsTrackingEnabled()
+	s.logger.SetTracking(newState)
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]bool{"tracking": newState})
+}
+
+func (s *AdminServer) handleTrackingState(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"tracking": s.logger.IsTrackingEnabled()})
 }
 
 const dashboardHTML = `
@@ -186,6 +204,18 @@ const dashboardHTML = `
             transform: translateY(0);
         }
 
+        #trackingBtn {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid var(--border-color);
+            margin-left: 1rem;
+        }
+
+        #trackingBtn.active {
+            background: rgba(16, 185, 129, 0.2);
+            border-color: var(--success);
+            color: var(--success);
+        }
+
         table {
             width: 100%;
             border-collapse: collapse;
@@ -248,8 +278,13 @@ const dashboardHTML = `
 <body>
     <div class="container">
         <header>
-            <h1>DNS Sinkhole</h1>
-            <div style="color: var(--text-muted); font-size: 0.9rem;">Live Traffic Monitor</div>
+            <div>
+                <h1>DNS Sinkhole</h1>
+                <div style="color: var(--text-muted); font-size: 0.9rem;">Live Traffic Monitor</div>
+            </div>
+            <div class="tracking-control">
+                <button id="trackingBtn" onclick="toggleTracking()">Enable Detailed Tracking</button>
+            </div>
         </header>
 
         <div class="panels">
@@ -273,13 +308,15 @@ const dashboardHTML = `
                             <tr>
                                 <th>Time</th>
                                 <th>Client IP</th>
+                                <th>Type</th>
                                 <th>Domain</th>
                                 <th>Status</th>
+                                <th>Response</th>
                             </tr>
                         </thead>
                         <tbody id="logsTable">
                             <tr>
-                                <td colspan="4" style="text-align: center; color: var(--text-muted);">Loading...</td>
+                                <td colspan="6" style="text-align: center; color: var(--text-muted);">Loading...</td>
                             </tr>
                         </tbody>
                     </table>
@@ -310,7 +347,7 @@ const dashboardHTML = `
                 
                 const tbody = document.getElementById('logsTable');
                 if (!logs || logs.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">No queries yet.</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No queries yet.</td></tr>';
                     return;
                 }
 
@@ -319,8 +356,10 @@ const dashboardHTML = `
                     return '<tr>' +
                         '<td style="color: var(--text-muted);">' + formatTime(log.timestamp) + '</td>' +
                         '<td>' + log.client_ip + '</td>' +
+                        '<td style="color: var(--text-muted); font-size: 0.85rem;">' + (log.query_type || '-') + '</td>' +
                         '<td style="font-family: monospace;">' + domain + '</td>' +
                         '<td>' + getStatusBadge(log.status) + '</td>' +
+                        '<td style="font-family: monospace; font-size: 0.85rem; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="' + (log.response || '') + '">' + (log.response || '-') + '</td>' +
                         '</tr>';
                 }).join('');
             } catch (error) {
@@ -363,6 +402,42 @@ const dashboardHTML = `
             }
         }
 
+        let isTracking = false;
+
+        async function fetchTrackingState() {
+            try {
+                const res = await fetch('/api/tracking/state');
+                const data = await res.json();
+                isTracking = data.tracking;
+                updateTrackingBtn();
+            } catch (error) {
+                console.error("Failed to fetch tracking state:", error);
+            }
+        }
+
+        async function toggleTracking() {
+            try {
+                const res = await fetch('/api/tracking/toggle', { method: 'POST' });
+                const data = await res.json();
+                isTracking = data.tracking;
+                updateTrackingBtn();
+            } catch (error) {
+                console.error("Failed to toggle tracking:", error);
+            }
+        }
+
+        function updateTrackingBtn() {
+            const btn = document.getElementById('trackingBtn');
+            if (isTracking) {
+                btn.textContent = "Disable Detailed Tracking";
+                btn.classList.add("active");
+            } else {
+                btn.textContent = "Enable Detailed Tracking";
+                btn.classList.remove("active");
+            }
+        }
+
+        fetchTrackingState();
         fetchLogs();
         setInterval(fetchLogs, 2000);
     </script>
