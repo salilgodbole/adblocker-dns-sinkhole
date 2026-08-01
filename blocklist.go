@@ -14,15 +14,17 @@ const blocklistURL = "https://raw.githubusercontent.com/StevenBlack/hosts/master
 const customBlocklistFile = "custom_blocklist.txt"
 
 type Blocklist struct {
-	mu            sync.RWMutex
-	domains       map[string]struct{}
-	customDomains map[string]struct{}
+	mu              sync.RWMutex
+	domains         map[string]struct{}
+	customDomains   map[string]struct{}
+	blockingEnabled bool
 }
 
 func NewBlocklist() *Blocklist {
 	return &Blocklist{
-		domains:       make(map[string]struct{}),
-		customDomains: make(map[string]struct{}),
+		domains:         make(map[string]struct{}),
+		customDomains:   make(map[string]struct{}),
+		blockingEnabled: true,
 	}
 }
 
@@ -110,11 +112,27 @@ func (b *Blocklist) WatchCustomBlocklist() {
 	}
 }
 
+func (b *Blocklist) SetBlocking(enabled bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.blockingEnabled = enabled
+}
+
+func (b *Blocklist) IsBlockingEnabled() bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.blockingEnabled
+}
+
 func (b *Blocklist) IsBlocked(domain string) (bool, LogStatus) {
 	domain = strings.TrimSuffix(domain, ".")
 	
 	b.mu.RLock()
 	defer b.mu.RUnlock()
+
+	if !b.blockingEnabled {
+		return false, StatusAllowed
+	}
 
 	// Check custom first
 	if _, exists := b.customDomains[domain]; exists {

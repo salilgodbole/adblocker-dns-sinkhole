@@ -19,7 +19,7 @@ func main() {
 	go blocklist.WatchCustomBlocklist()
 
 	// Start Admin Server
-	adminServer := NewAdminServer(logger)
+	adminServer := NewAdminServer(logger, blocklist)
 	go adminServer.Start("8333")
 
 	addr := &net.UDPAddr{

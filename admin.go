@@ -9,11 +9,12 @@ import (
 )
 
 type AdminServer struct {
-	logger *QueryLogger
+	logger    *QueryLogger
+	blocklist *Blocklist
 }
 
-func NewAdminServer(logger *QueryLogger) *AdminServer {
-	return &AdminServer{logger: logger}
+func NewAdminServer(logger *QueryLogger, blocklist *Blocklist) *AdminServer {
+	return &AdminServer{logger: logger, blocklist: blocklist}
 }
 
 func (s *AdminServer) Start(port string) {
@@ -23,6 +24,8 @@ func (s *AdminServer) Start(port string) {
 	http.HandleFunc("/api/unblock", s.handleRemoveBlock)
 	http.HandleFunc("/api/tracking/toggle", s.handleToggleTracking)
 	http.HandleFunc("/api/tracking/state", s.handleTrackingState)
+	http.HandleFunc("/api/blocking/toggle", s.handleToggleBlocking)
+	http.HandleFunc("/api/blocking/state", s.handleBlockingState)
 
 	fmt.Printf("Admin dashboard running at http://localhost:%s\n", port)
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
@@ -124,6 +127,22 @@ func (s *AdminServer) handleToggleTracking(w http.ResponseWriter, r *http.Reques
 func (s *AdminServer) handleTrackingState(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{"tracking": s.logger.IsTrackingEnabled()})
+}
+
+func (s *AdminServer) handleToggleBlocking(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	newState := !s.blocklist.IsBlockingEnabled()
+	s.blocklist.SetBlocking(newState)
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]bool{"blocking": newState})
+}
+
+func (s *AdminServer) handleBlockingState(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"blocking": s.blocklist.IsBlockingEnabled()})
 }
 
 const dashboardHTML = `
@@ -249,13 +268,24 @@ const dashboardHTML = `
         #trackingBtn {
             background: rgba(255, 255, 255, 0.1);
             border: 1px solid var(--border-color);
-            margin-left: 1rem;
         }
 
         #trackingBtn.active {
             background: rgba(16, 185, 129, 0.2);
             border-color: var(--success);
             color: var(--success);
+        }
+
+        #blockingBtn {
+            background: rgba(16, 185, 129, 0.2);
+            border: 1px solid var(--success);
+            color: var(--success);
+        }
+
+        #blockingBtn.paused {
+            background: rgba(239, 68, 68, 0.2);
+            border-color: var(--danger);
+            color: var(--danger);
         }
 
         table {
@@ -324,7 +354,8 @@ const dashboardHTML = `
                 <h1>DNS Sinkhole</h1>
                 <div style="color: var(--text-muted); font-size: 0.9rem;">Live Traffic Monitor</div>
             </div>
-            <div class="tracking-control">
+            <div class="tracking-control" style="display: flex; gap: 1rem;">
+                <button id="blockingBtn" onclick="toggleBlocking()">Pause Ad Blocking</button>
                 <button id="trackingBtn" onclick="toggleTracking()">Enable Detailed Tracking</button>
             </div>
         </header>
@@ -472,6 +503,7 @@ const dashboardHTML = `
         }
 
         let isTracking = false;
+        let isBlocking = true;
 
         async function fetchTrackingState() {
             try {
@@ -481,6 +513,17 @@ const dashboardHTML = `
                 updateTrackingBtn();
             } catch (error) {
                 console.error("Failed to fetch tracking state:", error);
+            }
+        }
+
+        async function fetchBlockingState() {
+            try {
+                const res = await fetch('/api/blocking/state');
+                const data = await res.json();
+                isBlocking = data.blocking;
+                updateBlockingBtn();
+            } catch (error) {
+                console.error("Failed to fetch blocking state:", error);
             }
         }
 
@@ -495,6 +538,17 @@ const dashboardHTML = `
             }
         }
 
+        async function toggleBlocking() {
+            try {
+                const res = await fetch('/api/blocking/toggle', { method: 'POST' });
+                const data = await res.json();
+                isBlocking = data.blocking;
+                updateBlockingBtn();
+            } catch (error) {
+                console.error("Failed to toggle blocking:", error);
+            }
+        }
+
         function updateTrackingBtn() {
             const btn = document.getElementById('trackingBtn');
             if (isTracking) {
@@ -506,10 +560,22 @@ const dashboardHTML = `
             }
         }
 
+        function updateBlockingBtn() {
+            const btn = document.getElementById('blockingBtn');
+            if (isBlocking) {
+                btn.textContent = "Pause Ad Blocking";
+                btn.classList.remove("paused");
+            } else {
+                btn.textContent = "Resume Ad Blocking";
+                btn.classList.add("paused");
+            }
+        }
+
         document.getElementById('statusFilter').addEventListener('change', fetchLogs);
         document.getElementById('ipFilter').addEventListener('input', fetchLogs);
 
         fetchTrackingState();
+        fetchBlockingState();
         fetchLogs();
         setInterval(fetchLogs, 2000);
     </script>
