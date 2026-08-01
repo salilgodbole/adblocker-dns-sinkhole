@@ -301,7 +301,17 @@ const dashboardHTML = `
 
             <!-- Main Content -->
             <div class="glass-panel">
-                <h2>Recent Queries</h2>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                    <h2>Recent Queries</h2>
+                    <div style="display: flex; gap: 1rem;">
+                        <select id="statusFilter" style="padding: 0.4rem 0.75rem; border-radius: 6px; background: rgba(15, 23, 42, 0.6); color: white; border: 1px solid var(--border-color); outline: none; font-size: 0.9rem;">
+                            <option value="all">All Statuses</option>
+                            <option value="allowed">Allowed Only</option>
+                            <option value="blocked">Blocked Only</option>
+                        </select>
+                        <input type="text" id="ipFilter" placeholder="Filter by Client IP..." style="padding: 0.4rem 0.75rem; border-radius: 6px; width: 180px; font-size: 0.9rem; margin: 0;">
+                    </div>
+                </div>
                 <div style="overflow-x: auto;">
                     <table>
                         <thead>
@@ -345,13 +355,27 @@ const dashboardHTML = `
                 const response = await fetch('/api/logs');
                 const logs = await response.json();
                 
+                let filteredLogs = logs || [];
+                
+                const statusFilter = document.getElementById('statusFilter').value;
+                if (statusFilter === 'allowed') {
+                    filteredLogs = filteredLogs.filter(log => log.status === 'Allowed');
+                } else if (statusFilter === 'blocked') {
+                    filteredLogs = filteredLogs.filter(log => log.status !== 'Allowed');
+                }
+
+                const ipFilter = document.getElementById('ipFilter').value.trim();
+                if (ipFilter) {
+                    filteredLogs = filteredLogs.filter(log => log.client_ip.includes(ipFilter));
+                }
+
                 const tbody = document.getElementById('logsTable');
-                if (!logs || logs.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No queries yet.</td></tr>';
+                if (filteredLogs.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No queries match filters.</td></tr>';
                     return;
                 }
 
-                tbody.innerHTML = logs.map(log => {
+                tbody.innerHTML = filteredLogs.map(log => {
                     const domain = log.domain.endsWith('.') ? log.domain.slice(0, -1) : log.domain;
                     return '<tr>' +
                         '<td style="color: var(--text-muted);">' + formatTime(log.timestamp) + '</td>' +
@@ -436,6 +460,9 @@ const dashboardHTML = `
                 btn.classList.remove("active");
             }
         }
+
+        document.getElementById('statusFilter').addEventListener('change', fetchLogs);
+        document.getElementById('ipFilter').addEventListener('input', fetchLogs);
 
         fetchTrackingState();
         fetchLogs();
