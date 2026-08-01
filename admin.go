@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 )
 
 type AdminServer struct {
@@ -19,6 +20,7 @@ func (s *AdminServer) Start(port string) {
 	http.HandleFunc("/", s.handleDashboard)
 	http.HandleFunc("/api/logs", s.handleGetLogs)
 	http.HandleFunc("/api/block", s.handleAddBlock)
+	http.HandleFunc("/api/unblock", s.handleRemoveBlock)
 	http.HandleFunc("/api/tracking/toggle", s.handleToggleTracking)
 	http.HandleFunc("/api/tracking/state", s.handleTrackingState)
 
@@ -66,6 +68,46 @@ func (s *AdminServer) handleAddBlock(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Domain added"))
+}
+
+func (s *AdminServer) handleRemoveBlock(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	domain := r.FormValue("domain")
+	if domain == "" {
+		http.Error(w, "Domain is required", http.StatusBadRequest)
+		return
+	}
+
+	data, err := os.ReadFile(customBlocklistFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Error(w, "Failed to read blocklist", http.StatusInternalServerError)
+		return
+	}
+
+	lines := strings.Split(string(data), "\n")
+	var newLines []string
+	for _, line := range lines {
+		if strings.TrimSpace(line) != domain {
+			newLines = append(newLines, line)
+		}
+	}
+
+	err = os.WriteFile(customBlocklistFile, []byte(strings.Join(newLines, "\n")), 0644)
+	if err != nil {
+		http.Error(w, "Failed to write blocklist", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("Domain removed"))
 }
 
 func (s *AdminServer) handleToggleTracking(w http.ResponseWriter, r *http.Request) {
@@ -290,11 +332,14 @@ const dashboardHTML = `
         <div class="panels">
             <!-- Sidebar -->
             <div class="glass-panel" style="height: fit-content;">
-                <h2>Block Domain</h2>
-                <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.5rem;">Instantly add a domain to your custom blocklist.</p>
-                <form id="blockForm" class="form-group" onsubmit="addDomain(event)">
+                <h2>Manage Blocklist</h2>
+                <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.5rem;">Instantly add or remove a domain from your custom blocklist.</p>
+                <form id="blockForm" class="form-group">
                     <input type="text" id="domainInput" placeholder="e.g. ads.example.com" required>
-                    <button type="submit">Add to Blocklist</button>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <button type="button" onclick="handleDomainAction('block')" style="flex: 1;">Block</button>
+                        <button type="button" onclick="handleDomainAction('unblock')" style="flex: 1; background: var(--danger);">Unblock</button>
+                    </div>
                 </form>
                 <div id="formMsg" style="margin-top: 1rem; font-size: 0.9rem; display: none;"></div>
             </div>
@@ -391,8 +436,7 @@ const dashboardHTML = `
             }
         }
 
-        async function addDomain(e) {
-            e.preventDefault();
+        async function handleDomainAction(action) {
             const input = document.getElementById('domainInput');
             const domain = input.value.trim();
             const msgEl = document.getElementById('formMsg');
@@ -403,7 +447,8 @@ const dashboardHTML = `
             formData.append('domain', domain);
 
             try {
-                const res = await fetch('/api/block', {
+                const endpoint = action === 'block' ? '/api/block' : '/api/unblock';
+                const res = await fetch(endpoint, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/x-www-form-urlencoded',
@@ -413,14 +458,14 @@ const dashboardHTML = `
 
                 if (res.ok) {
                     input.value = '';
-                    msgEl.textContent = "Domain added successfully!";
+                    msgEl.textContent = action === 'block' ? "Domain blocked successfully!" : "Domain unblocked successfully!";
                     msgEl.style.color = "var(--success)";
                     msgEl.style.display = "block";
                     setTimeout(() => msgEl.style.display = "none", 3000);
                     fetchLogs();
                 }
             } catch(e) {
-                msgEl.textContent = "Error adding domain.";
+                msgEl.textContent = "Error updating blocklist.";
                 msgEl.style.color = "var(--danger)";
                 msgEl.style.display = "block";
             }
