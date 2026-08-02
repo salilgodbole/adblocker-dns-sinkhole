@@ -23,6 +23,8 @@ func (s *AdminServer) Start(port string) {
 	http.HandleFunc("/api/logs/clear", s.handleClearLogs)
 	http.HandleFunc("/api/block", s.handleAddBlock)
 	http.HandleFunc("/api/unblock", s.handleRemoveBlock)
+	http.HandleFunc("/api/allow", s.handleAddAllow)
+	http.HandleFunc("/api/unallow", s.handleRemoveAllow)
 	http.HandleFunc("/api/tracking/toggle", s.handleToggleTracking)
 	http.HandleFunc("/api/tracking/state", s.handleTrackingState)
 	http.HandleFunc("/api/blocking/toggle", s.handleToggleBlocking)
@@ -112,6 +114,74 @@ func (s *AdminServer) handleRemoveBlock(w http.ResponseWriter, r *http.Request) 
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Domain removed"))
+}
+
+func (s *AdminServer) handleAddAllow(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	domain := r.FormValue("domain")
+	if domain == "" {
+		http.Error(w, "Domain is required", http.StatusBadRequest)
+		return
+	}
+
+	f, err := os.OpenFile(customAllowlistFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		http.Error(w, "Failed to open allowlist", http.StatusInternalServerError)
+		return
+	}
+	defer f.Close()
+
+	if _, err := f.WriteString(domain + "\n"); err != nil {
+		http.Error(w, "Failed to write to allowlist", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("Domain allowed"))
+}
+
+func (s *AdminServer) handleRemoveAllow(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	domain := r.FormValue("domain")
+	if domain == "" {
+		http.Error(w, "Domain is required", http.StatusBadRequest)
+		return
+	}
+
+	data, err := os.ReadFile(customAllowlistFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Error(w, "Failed to read allowlist", http.StatusInternalServerError)
+		return
+	}
+
+	lines := strings.Split(string(data), "\n")
+	var newLines []string
+	for _, line := range lines {
+		if strings.TrimSpace(line) != domain {
+			newLines = append(newLines, line)
+		}
+	}
+
+	err = os.WriteFile(customAllowlistFile, []byte(strings.Join(newLines, "\n")), 0644)
+	if err != nil {
+		http.Error(w, "Failed to write allowlist", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("Domain removed from allowlist"))
 }
 
 func (s *AdminServer) handleToggleTracking(w http.ResponseWriter, r *http.Request) {
@@ -431,6 +501,8 @@ const dashboardHTML = `
         function getStatusBadge(status) {
             if (status === "Allowed") {
                 return '<span class="status-badge status-allowed">Allowed</span>';
+            } else if (status === "Allowed (Custom)") {
+                return '<span class="status-badge status-allowed">Custom Allow</span>';
             } else if (status === "Blocked (Custom)") {
                 return '<span class="status-badge status-custom">Custom Block</span>';
             }
@@ -469,6 +541,10 @@ const dashboardHTML = `
                         inlineAction = '<button onclick="handleInlineAction(event, \'block\', \'' + domain + '\')" style="margin-left: 0.5rem; padding: 0.2rem 0.5rem; font-size: 0.75rem; background: rgba(255,255,255,0.1); border: 1px solid var(--border-color);">Block</button>';
                     } else if (log.status === "Blocked (Custom)") {
                         inlineAction = '<button onclick="handleInlineAction(event, \'unblock\', \'' + domain + '\')" style="margin-left: 0.5rem; padding: 0.2rem 0.5rem; font-size: 0.75rem; background: rgba(239, 68, 68, 0.2); border: 1px solid var(--danger); color: var(--danger);">Unblock</button>';
+                    } else if (log.status === "Blocked (Community)") {
+                        inlineAction = '<button onclick="handleInlineAction(event, \'allow\', \'' + domain + '\')" style="margin-left: 0.5rem; padding: 0.2rem 0.5rem; font-size: 0.75rem; background: rgba(16, 185, 129, 0.2); border: 1px solid var(--success); color: var(--success);">Allow</button>';
+                    } else if (log.status === "Allowed (Custom)") {
+                        inlineAction = '<button onclick="handleInlineAction(event, \'unallow\', \'' + domain + '\')" style="margin-left: 0.5rem; padding: 0.2rem 0.5rem; font-size: 0.75rem; background: rgba(239, 68, 68, 0.2); border: 1px solid var(--danger); color: var(--danger);">Remove</button>';
                     }
                     return '<tr>' +
                         '<td style="color: var(--text-muted);">' + formatTime(log.timestamp) + '</td>' +
@@ -523,7 +599,13 @@ const dashboardHTML = `
             e.preventDefault();
             const formData = new URLSearchParams();
             formData.append('domain', domain);
-            const endpoint = action === 'block' ? '/api/block' : '/api/unblock';
+            
+            let endpoint = '';
+            if (action === 'block') endpoint = '/api/block';
+            else if (action === 'unblock') endpoint = '/api/unblock';
+            else if (action === 'allow') endpoint = '/api/allow';
+            else if (action === 'unallow') endpoint = '/api/unallow';
+
             try {
                 await fetch(endpoint, {
                     method: 'POST',

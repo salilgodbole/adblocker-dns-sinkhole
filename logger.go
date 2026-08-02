@@ -9,6 +9,7 @@ type LogStatus string
 
 const (
 	StatusAllowed        LogStatus = "Allowed"
+	StatusAllowedCustom  LogStatus = "Allowed (Custom)"
 	StatusBlockedCustom  LogStatus = "Blocked (Custom)"
 	StatusBlockedDefault LogStatus = "Blocked (Community)"
 )

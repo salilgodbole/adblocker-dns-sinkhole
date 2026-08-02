@@ -12,11 +12,13 @@ import (
 
 const blocklistURL = "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"
 const customBlocklistFile = "custom_blocklist.txt"
+const customAllowlistFile = "custom_allowlist.txt"
 
 type Blocklist struct {
 	mu              sync.RWMutex
 	domains         map[string]struct{}
 	customDomains   map[string]struct{}
+	allowDomains    map[string]struct{}
 	blockingEnabled bool
 }
 
@@ -24,6 +26,7 @@ func NewBlocklist() *Blocklist {
 	return &Blocklist{
 		domains:         make(map[string]struct{}),
 		customDomains:   make(map[string]struct{}),
+		allowDomains:    make(map[string]struct{}),
 		blockingEnabled: true,
 	}
 }
@@ -89,26 +92,61 @@ func (b *Blocklist) loadCustomList() {
 	b.mu.Lock()
 	// Only print if the count changed to avoid spamming the console
 	if len(b.customDomains) != len(newCustomDomains) {
-		fmt.Printf("Loaded %d custom domains from %s\n", len(newCustomDomains), customBlocklistFile)
+		fmt.Printf("Loaded %d custom blocked domains from %s\n", len(newCustomDomains), customBlocklistFile)
 	}
 	b.customDomains = newCustomDomains
 	b.mu.Unlock()
 }
 
-// WatchCustomBlocklist polls the custom blocklist file every 5 seconds and updates the map instantly
+func (b *Blocklist) loadAllowList() {
+	file, err := os.Open(customAllowlistFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			b.mu.Lock()
+			b.allowDomains = make(map[string]struct{})
+			b.mu.Unlock()
+		}
+		return
+	}
+	defer file.Close()
+
+	newAllowDomains := make(map[string]struct{})
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		newAllowDomains[line] = struct{}{}
+	}
+
+	b.mu.Lock()
+	if len(b.allowDomains) != len(newAllowDomains) {
+		fmt.Printf("Loaded %d custom allowed domains from %s\n", len(newAllowDomains), customAllowlistFile)
+	}
+	b.allowDomains = newAllowDomains
+	b.mu.Unlock()
+}
+
+// WatchCustomBlocklist polls the custom lists every 5 seconds and updates the maps instantly
 func (b *Blocklist) WatchCustomBlocklist() {
-	// Create an empty file if it doesn't exist
+	// Create empty files if they don't exist
 	if _, err := os.Stat(customBlocklistFile); os.IsNotExist(err) {
 		os.WriteFile(customBlocklistFile, []byte("# Add your custom domains here, one per line\n"), 0644)
+	}
+	if _, err := os.Stat(customAllowlistFile); os.IsNotExist(err) {
+		os.WriteFile(customAllowlistFile, []byte("# Add domains to ALWAYS ALLOW here, one per line\n"), 0644)
 	}
 
 	// Load initially
 	b.loadCustomList()
+	b.loadAllowList()
 
 	// Poll every 5 seconds
 	ticker := time.NewTicker(5 * time.Second)
 	for range ticker.C {
 		b.loadCustomList()
+		b.loadAllowList()
 	}
 }
 
@@ -132,6 +170,11 @@ func (b *Blocklist) IsBlocked(domain string) (bool, LogStatus) {
 
 	if !b.blockingEnabled {
 		return false, StatusAllowed
+	}
+
+	// Check allowlist first
+	if _, exists := b.allowDomains[domain]; exists {
+		return false, StatusAllowedCustom
 	}
 
 	// Check custom first
