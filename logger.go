@@ -69,6 +69,12 @@ func (l *QueryLogger) Log(clientIP, domain string, status LogStatus, queryType s
 	}
 }
 
+func (l *QueryLogger) ClearLogs() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.entries = make([]LogEntry, 0, l.maxSize)
+}
+
 func (l *QueryLogger) GetLogs() []LogEntry {
 	l.mu.RLock()
 	defer l.mu.RUnlock()

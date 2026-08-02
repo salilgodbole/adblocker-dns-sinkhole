@@ -20,6 +20,7 @@ func NewAdminServer(logger *QueryLogger, blocklist *Blocklist) *AdminServer {
 func (s *AdminServer) Start(port string) {
 	http.HandleFunc("/", s.handleDashboard)
 	http.HandleFunc("/api/logs", s.handleGetLogs)
+	http.HandleFunc("/api/logs/clear", s.handleClearLogs)
 	http.HandleFunc("/api/block", s.handleAddBlock)
 	http.HandleFunc("/api/unblock", s.handleRemoveBlock)
 	http.HandleFunc("/api/tracking/toggle", s.handleToggleTracking)
@@ -143,6 +144,15 @@ func (s *AdminServer) handleToggleBlocking(w http.ResponseWriter, r *http.Reques
 func (s *AdminServer) handleBlockingState(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{"blocking": s.blocklist.IsBlockingEnabled()})
+}
+
+func (s *AdminServer) handleClearLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	s.logger.ClearLogs()
+	w.WriteHeader(http.StatusOK)
 }
 
 const dashboardHTML = `
@@ -380,6 +390,7 @@ const dashboardHTML = `
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
                     <h2>Recent Queries</h2>
                     <div style="display: flex; gap: 1rem;">
+                        <button onclick="clearLogs()" style="padding: 0.4rem 0.75rem; background: rgba(239, 68, 68, 0.2); border: 1px solid var(--danger); color: var(--danger); font-size: 0.9rem; margin-right: 0.5rem;">Clear Logs</button>
                         <select id="statusFilter" style="padding: 0.4rem 0.75rem; border-radius: 6px; background: rgba(15, 23, 42, 0.6); color: white; border: 1px solid var(--border-color); outline: none; font-size: 0.9rem;">
                             <option value="all">All Statuses</option>
                             <option value="allowed">Allowed Only</option>
@@ -453,11 +464,17 @@ const dashboardHTML = `
 
                 tbody.innerHTML = filteredLogs.map(log => {
                     const domain = log.domain.endsWith('.') ? log.domain.slice(0, -1) : log.domain;
+                    let inlineAction = '';
+                    if (log.status === "Allowed") {
+                        inlineAction = '<button onclick="handleInlineAction(event, \'block\', \'' + domain + '\')" style="margin-left: 0.5rem; padding: 0.2rem 0.5rem; font-size: 0.75rem; background: rgba(255,255,255,0.1); border: 1px solid var(--border-color);">Block</button>';
+                    } else if (log.status === "Blocked (Custom)") {
+                        inlineAction = '<button onclick="handleInlineAction(event, \'unblock\', \'' + domain + '\')" style="margin-left: 0.5rem; padding: 0.2rem 0.5rem; font-size: 0.75rem; background: rgba(239, 68, 68, 0.2); border: 1px solid var(--danger); color: var(--danger);">Unblock</button>';
+                    }
                     return '<tr>' +
                         '<td style="color: var(--text-muted);">' + formatTime(log.timestamp) + '</td>' +
                         '<td>' + log.client_ip + '</td>' +
                         '<td style="color: var(--text-muted); font-size: 0.85rem;">' + (log.query_type || '-') + '</td>' +
-                        '<td style="font-family: monospace;">' + domain + '</td>' +
+                        '<td style="font-family: monospace; display: flex; justify-content: space-between; align-items: center; min-height: 28px;"><span>' + domain + '</span>' + inlineAction + '</td>' +
                         '<td>' + getStatusBadge(log.status) + '</td>' +
                         '<td style="font-family: monospace; font-size: 0.85rem; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="' + (log.response || '') + '">' + (log.response || '-') + '</td>' +
                         '</tr>';
@@ -499,6 +516,33 @@ const dashboardHTML = `
                 msgEl.textContent = "Error updating blocklist.";
                 msgEl.style.color = "var(--danger)";
                 msgEl.style.display = "block";
+            }
+        }
+
+        async function handleInlineAction(e, action, domain) {
+            e.preventDefault();
+            const formData = new URLSearchParams();
+            formData.append('domain', domain);
+            const endpoint = action === 'block' ? '/api/block' : '/api/unblock';
+            try {
+                await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: formData
+                });
+                fetchLogs();
+            } catch(error) {
+                console.error("Inline action failed:", error);
+            }
+        }
+
+        async function clearLogs() {
+            if (!confirm("Are you sure you want to clear all logs?")) return;
+            try {
+                const res = await fetch('/api/logs/clear', { method: 'POST' });
+                if (res.ok) fetchLogs();
+            } catch(error) {
+                console.error("Failed to clear logs:", error);
             }
         }
 
